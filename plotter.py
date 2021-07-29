@@ -4,9 +4,16 @@ import pyqtgraph as pg
 from pyqtgraph.ptime import time
 import serial
 import sys
+from prometheus_client import start_http_server, Gauge, Enum
 
-port = '/dev/ttyUSB0'
+port = sys.argv[1] #'/dev/ttyUSB0'
 port_speed = 19200
+
+g = Gauge('stream_data_value', 'Serlial monitor data', ["name"])
+
+e = Enum('my_task_state', 'Description of enum',
+        states=['starting', 'running', 'stopped'])
+e.state('running')
 
 app = QtGui.QApplication([])
 
@@ -19,7 +26,7 @@ p.setYRange(0, 38)
 p.setXRange(0, num_samples)
 p.resize(900,900)
 
-labels = ["v_in", "v_out", "i_out", "duty"]
+labels = ["v_in", "v_out", "i_out", "duty", "v_max"]
 #, "pwr"]
 
 colors = {
@@ -27,7 +34,8 @@ colors = {
 	"v_out": 'y',
 	"i_out": 'm',
 	"duty": 'g',
-    "pwr": 'w'
+    "pwr": 'w',
+    "v_max": "w"
 }
 
 curves = {}
@@ -101,7 +109,9 @@ def update():
                 for l in labels:
                     c = curves.get(l)
                     d = data.get(l)
-                    d.append(values.get(l))
+                    v = values.get(l)
+                    d.append(v)
+                    g.labels(l).set(v)
                     while len(d)>num_samples:
                         d.pop(0)
                     c.setData(np.array(d, copy=False, dtype='float64'))
@@ -117,4 +127,5 @@ timer.timeout.connect(update)
 timer.start(5)
 
 if __name__ == '__main__':
+    # start_http_server(8000)
     app.exec()

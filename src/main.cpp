@@ -25,7 +25,7 @@ void setup()
   TCNT1 = 0;
   TCCR1A = 0b10100010; //COM1A0,COM1B0 are 0, COM1A1, COM1B1 are 1
   //also WGM11=1, WGM10=0 (8bit PWM/ TOP=0xFF)
-  //TCCR1B = 0b00001001; //WGM13 0 and WGM12 is 1, no prescaler CS10 is 1
+  TCCR1B = 0b00001001; //WGM13 0 and WGM12 is 1, no prescaler CS10 is 1
   // TCCR1B=0b00000011;//WGM13 and WGM12 are 0 with 1024 prescaler CS10 and CS12 is 1
   // OCR1A=0;// duty cycle value
   // OCR1B=500;// duty cycle value
@@ -36,7 +36,8 @@ void setup()
   // }
 }
 
-#define SAMPLES 5
+#define SAMPLES 2
+#define HISRORY 200
 #define CURRENT_MAX 12
 #define CURRENT_FAULT 20 / CURRENT_ADC_SCALE
 #define CURRENT_CAL -0.28
@@ -61,50 +62,48 @@ void setup()
 #define VOLTAGE_LOW 13.8
 #define VOLTAGE_HIGH 14.7
 
-int pwm = 0;
+float pwm = 0;
 
 #define setPwm(v) \
   pwm = (v);      \
-  OCR1A = pwm;
+  OCR1A = (int)pwm;
 
-void stopPwm()
-{
+#define stopPwm() \
   setPwm(0);
-  // TODO make sure that line is low
-  //TCCR1B = 0; //disable pwm;
-  // digitalWrite(9, LOW);
-}
 
-void startPwm()
-{
-  setPwm(0);
-  TCCR1B = 0b00001001;
-}
+// void stopPwm()
+// {
+//   setPwm(0);
+//   // TODO make sure that line is low
+//   //TCCR1B = 0; //disable pwm;
+//   // digitalWrite(9, LOW);
+// }
+
+// void startPwm()
+// {
+//   setPwm(0);
+//   TCCR1B = 0b00001001;
+// }
 
 void incPwm()
 {
-  if (pwm < PWM_MAX)
+  if (pwm - 0.2 <= PWM_MAX)
   {
-    // TCCR1B = 0b00001001;
-    setPwm(pwm + 1);
+    setPwm(pwm + 0.2);
   }
 }
 
 void decPwm()
 {
-  if (pwm > 0)
+  if (pwm - 0.2 >= 0)
   {
-    setPwm(pwm - 1);
-  }
-  else
-  {
-    // stopPwm();
-    setPwm(0);
+    setPwm(pwm - 0.2);
   }
 }
 
 long cnt = 0;
 int ptr = 0;
+int hist_ptr = 0;
 boolean on = true;
 boolean oc = false;
 boolean idle = true;
@@ -112,6 +111,10 @@ boolean idle = true;
 int iout_samples[SAMPLES];
 int vout_samples[SAMPLES];
 int vin_samples[SAMPLES];
+
+int iout_history[HISRORY];
+int vout_history[HISRORY];
+int vin_history[HISRORY];
 
 float max_pwr = 0;
 int max_pwr_pwm = 0;
@@ -122,6 +125,7 @@ bool high_out = 0;
 
 long wait = 1000;
 long trickle = 0;
+float ic = 0;
 
 void loop()
 {
@@ -129,9 +133,9 @@ void loop()
 
   if (iout_adc >= (int)(CURRENT_FAULT))
   {
-    oc = true;
-    wait = 2000;
     stopPwm();
+    oc = true;
+    wait = 10000;    
   }
 
   iout_samples[ptr] = iout_adc;
@@ -160,54 +164,43 @@ void loop()
 
   float pwr = vout * iout;
 
-  if (vout_max == VOLTAGE_LOW && iout > CURRENT_MIN)
+  if(trickle==0) 
   {
-    vout_max = VOLTAGE_HIGH;
-  }
-  else if (vout_max == VOLTAGE_HIGH && iout < CURRENT_MIN)
-  {
-    if (trickle==0) {
-      trickle = 1000000;
-    }
-    else if (trickle > 0)
+    if (vout_max == VOLTAGE_LOW && iout > CURRENT_MIN*2)
     {
-      trickle--;
+      vout_max = VOLTAGE_HIGH;
+      trickle = 10000;
+      ic = iout;
     }
-    else
-    {
+    else if (vout_max == VOLTAGE_HIGH && iout < CURRENT_MIN)
+    {      
       vout_max = VOLTAGE_LOW;
+      trickle = 100000;
+      ic = iout;
     }
+  } else {
+    trickle--;
   }
 
-  if (wait > 0)
+  if (wait==0)
   {
-    wait--;
-  }
-  else if (wait == 0)
-  {
-    oc = 0;
-    wait = -1;
-    startPwm();
-  }
-  else
-  {
-    if ((vin<VOLTAGE_LOW +VOLTAGE_TOL || vout + VOLTAGE_TOL > vout_max) && iout < 0.2)
-    {
-        stopPwm();
-        vout_max = VOLTAGE_LOW;
-        wait = 1000;
-    }
-    else
-    {
-      if (vout > vout_max + 0.05 || iout > iout_max + 0.05 || vout > vin)
+      if (vout > vout_max || iout > iout_max || vout > vin - VOLTAGE_TOL)
       {
         decPwm();
       }
-      else if (vout < vout_max && iout < iout_max && vin > vout) //vin > vout_max &&
+      else if (vout < vout_max && vout < vin && iout < iout_max)
       {
         incPwm();
       }
-    }
+  }
+  else 
+  {
+    stopPwm();
+    wait--;
+    if (wait==0)
+    {
+      oc = false;
+    }    
   }
 
   // if (pwr > max_pwr)
@@ -252,7 +245,7 @@ void loop()
       break;
     case '1':
       Serial.println("# Charger on");
-      startPwm();
+      // startPwm();
       break;
     }
   }
@@ -287,12 +280,15 @@ void loop()
     // Serial.print("p_max:");
     // Serial.print(max_pwr);
     Serial.print(" ");
-    Serial.print("oc:");
-    Serial.print(oc ? "1" : "0");
+    Serial.print("v_max:");
+    Serial.print(vout_max);
+    Serial.print(" ");
+    Serial.print("v_max_ic:");
+    Serial.print(ic);
 
     Serial.println();
-    delay(2);
-  }
+    delay(1);
+  } 
 
   cnt++;
 }
